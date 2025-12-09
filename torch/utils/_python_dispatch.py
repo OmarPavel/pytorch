@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import inspect
 import warnings
 from collections import deque
 from dataclasses import dataclass
@@ -50,6 +51,23 @@ def is_in_any_mode_without_ignore_compile_internals() -> bool:
     return _is_in_any_mode_without_ignore_compile_internals
 
 
+def any_torch_dispatch_mode_on_stack() -> bool:
+    stack_len = torch._C._len_torch_dispatch_stack()
+
+    for idx in range(stack_len):
+        mode = _get_dispatch_stack_at(idx)
+
+        # Apply filters first
+        if mode.is_infra_mode():
+            continue
+
+        if mode.ignore_compile_internals():
+            continue
+
+        return True
+    return False
+
+
 class TorchDispatchMode:
     """
     A ``TorchDispatchMode`` allows you to override the meaning of all
@@ -87,7 +105,14 @@ class TorchDispatchMode:
     # Mode authors can implement how the mode interacts with higher order operators.
     supports_higher_order_operators = False
 
-    def __init__(self, _dispatch_key=None) -> None:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "__torch_dispatch__" in cls.__dict__:
+            raw = inspect.getattr_static(cls, "__torch_dispatch__")
+            if not isinstance(raw, classmethod):
+                cls.__torch_dispatch__ = torch._disable_dynamo(raw, recursive=True)
+
+    def __init__(self, _dispatch_key=None):
         if _dispatch_key is not None:
             if not isinstance(_dispatch_key, torch._C.DispatchKey):
                 raise AssertionError("_dispatch_key must be a torch._C.DispatchKey")
@@ -99,7 +124,7 @@ class TorchDispatchMode:
             deque()
         )
 
-    def _lazy_init_old_dispatch_mode_flags(self) -> None:
+    def _lazy_init_old_dispatch_mode_flags(self):
         if not hasattr(self, "old_dispatch_mode_flags"):
             self.old_dispatch_mode_flags: deque[bool] = deque()  # type: ignore[no-redef]
 
