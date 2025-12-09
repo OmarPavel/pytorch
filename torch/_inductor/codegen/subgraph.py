@@ -85,7 +85,6 @@ class SubgraphChoiceCaller(ir.ChoiceCaller):
         TODO: Add precompile() method to enable parallel compilation of all choices
         before benchmarking.
         """
-        import torch._inductor.config as inductor_config
         from torch._inductor.graph import GraphLowering
 
         safe_name = self.name.replace("::", "_").replace(".", "_")
@@ -125,7 +124,7 @@ class SubgraphChoiceCaller(ir.ChoiceCaller):
 
         with V.set_graph_handler(bm_graph_lowering):
             # Don't bother autotuning on Triton here
-            with inductor_config.patch(
+            with config.patch(
                 max_autotune=False,
                 max_autotune_gemm=False,
                 max_autotune_gemm_backends="ATEN",
@@ -149,12 +148,17 @@ class SubgraphChoiceCaller(ir.ChoiceCaller):
             assert sym_inputs is not None  # Type narrowing
 
         bm_func = mod.call
+        benchmark_configs = {
+            "warmup": config.max_autotune_gemm_benchmark_warmup,
+            "rep": config.max_autotune_gemm_benchmark_reps,
+        }
         if config.profile_bandwidth_with_do_bench_using_profiling:
-            return do_bench_using_profiling(lambda: bm_func([*sym_inputs, *args]))
+            return do_bench_using_profiling(lambda: bm_func([*sym_inputs, *args]), **benchmark_configs)
         return benchmarker.benchmark(
             # Shallow clone args since bm_func may clear args
             lambda: bm_func([*sym_inputs, *args]),
             device=benchmarker.infer_device(*sym_inputs, *args),
+            **benchmark_configs,
         )
 
     def benchmark_collective(self, *args: list[Any], out: torch.Tensor) -> None:

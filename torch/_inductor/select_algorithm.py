@@ -2280,7 +2280,11 @@ class TritonTemplateCaller(ir.TritonTemplateCallerBase):
         assert self.bmreq is not None
         if config.profile_bandwidth_with_do_bench_using_profiling:
             algo = self.bmreq.make_run_fn(*args, out=out)
-            return do_bench_using_profiling(algo)
+            benchmark_configs = {
+                "warmup": config.max_autotune_gemm_benchmark_warmup,
+                "rep": config.max_autotune_gemm_benchmark_reps,
+            }
+            return do_bench_using_profiling(algo, **benchmark_configs)
         return self.bmreq.benchmark(*args, out=out)
 
     def precompile(self):
