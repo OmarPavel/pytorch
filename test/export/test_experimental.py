@@ -161,6 +161,58 @@ def forward(self, p_linear_weight, p_linear_bias, c_lifted_tensor_0, x):
     return (div, permute_3, view_3)""",
         )
 
+    def test_export_blockmask(self):
+        from torch._dynamo.functional_export import _dynamo_graph_capture_for_export
+        from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+        from torch.utils._pytree import register_pytree_node
+
+        register_pytree_node(
+            BlockMask,
+            BlockMask._flatten,
+            BlockMask._unflatten,
+            flatten_with_keys_fn=BlockMask._flatten_with_keys,
+            serialized_type_name="torch.nn.attention.flex_attention.BlockMask",
+        )
+
+        def make_mask_closure():
+            def fn(b, h, q, k):
+                return q >= k
+
+            return fn
+
+        class Model(torch.nn.Module):
+            def __init__(
+                self,
+            ):
+                super().__init__()
+
+            def forward(self, x):
+                mask_fn = make_mask_closure()
+                block_mask = create_block_mask(
+                    mask_fn, B=1, H=1, Q_LEN=64, KV_LEN=64, device=x.device
+                )
+                return x, block_mask
+
+        x = torch.randn(2, 128, device="cuda")
+        module = Model()
+
+        out_eager, mask_eager = module(x)
+
+        compiled = _dynamo_graph_capture_for_export(module)(x)
+        out_compiled, mask_compiled = compiled(x)
+
+        B = 1
+        H = 1
+        Q_LEN = 64
+        KV_LEN = 64
+
+        self.assertEqual(out_eager, out_compiled)
+        # they are not same function because dynamo reconstructs them
+        self.assertEqual(
+            mask_eager.mask_mod(B, H, Q_LEN, KV_LEN),
+            mask_compiled.mask_mod(B, H, Q_LEN, KV_LEN),
+        )
+
     def test_joint_dynamic(self) -> None:
         from torch.export import Dim
 
