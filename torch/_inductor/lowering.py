@@ -72,7 +72,6 @@ from .ir import (
     PermuteView,
     Pointwise,
     Reduction,
-    ShapeAsConstantBuffer,
     SqueezeView,
     TensorBox,
     validate_ir,
@@ -750,9 +749,7 @@ def make_foreach_pointwise(pw_fn, allow_alpha=False):
     return inner
 
 
-def to_dtype(
-    x: Union[TensorBox, ShapeAsConstantBuffer], dtype: torch.dtype, copy: bool = False
-):
+def to_dtype(x: TensorBox, dtype: torch.dtype, copy: bool = False):
     src_dtype = x.get_dtype()
     if src_dtype == dtype:
         return clone(x) if copy else x
@@ -1449,7 +1446,7 @@ def quantized_decomposed_quantize_per_channel(
     quant_min: int,
     quant_max: int,
     dtype: torch.dtype,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     assert len(scales.get_size()) == 1, "expect scales 1 dim"
     assert len(zero_points.get_size()) == 1, "expect zero_points 1 dim"
 
@@ -1532,7 +1529,7 @@ def quantized_decomposed_dequantize_per_channel(
     dtype: torch.dtype,
     *,
     out_dtype: Optional[torch.dtype] = None,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     assert len(scales.get_size()) == 1, "expect scales 1 dim"
     assert len(zero_points.get_size()) == 1, "expect zero_points 1 dim"
     assert input.get_dtype() == dtype, (
@@ -1582,7 +1579,7 @@ def quantized_decomposed_quantize_per_tensor_default(
     quant_min: int,
     quant_max: int,
     dtype: torch.dtype,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     if input.get_dtype() == torch.bfloat16:
         input = to_dtype(input, torch.float32)
     assert input.get_dtype() == torch.float32, (
@@ -1623,7 +1620,7 @@ def quantized_decomposed_dequantize_per_tensor_default(
     dtype: torch.dtype,
     *,
     out_dtype: Optional[torch.dtype] = None,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     assert input.get_dtype() == dtype, (
         f"Expecting input to have dtype {dtype}, but got dtype: {input.get_dtype()}"
     )
@@ -1660,7 +1657,7 @@ def quantized_decomposed_quantize_per_tensor_tensor(
     quant_min: int,
     quant_max: int,
     dtype: torch.dtype,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     if input.get_dtype() == torch.bfloat16:
         input = to_dtype(input, torch.float32)
     assert input.get_dtype() == torch.float32, (
@@ -1710,7 +1707,7 @@ def quantized_decomposed_dequantize_per_tensor_tensor(
     dtype: torch.dtype,
     *,
     out_dtype: Optional[torch.dtype] = None,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     assert len(scale.get_size()) == 0 or (
         len(scale.get_size()) == 1 and scale.get_size()[0] == 1
     ), "expect scale as scalar tensor"
@@ -2524,7 +2521,7 @@ def searchsorted(
     right: bool = False,
     side: Optional[str] = None,
     sorter: Optional[TensorBox] = None,
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     validate_bucketize = lambda tb: V.graph.has_feature(  # noqa: E731
         tb, BackendFeature.BUCKETIZE
     )
@@ -4792,7 +4789,7 @@ def _pool_offsets_to_indices(
         [Sequence[Union[int, torch.SymInt]], Sequence[Union[int, torch.SymInt]]],
         torch._inductor.virtualized.OpsValue,
     ],
-) -> Union[TensorBox, ShapeAsConstantBuffer]:
+) -> TensorBox:
     n_dim = len(kernel_size)
     offsets_loader = offsets.make_loader()
     window_size = sympy.sympify(functools.reduce(operator.mul, kernel_size))
@@ -7259,7 +7256,9 @@ def triton_kernel_wrap_(
 
 
 @register_lowering(torch.ops.higher_order.cond, type_promotion_kind=None)
-def cond(pred, true_fn, false_fn, operands):
+def cond(
+    pred, true_fn, false_fn, operands
+) -> list[Union[ir.TensorBox, ir.ShapeAsConstantBuffer]]:
     if any(isinstance(x, IRNode) and is_triton(x) for x in [pred, *operands]):
         msg = "control flow operator: torch.cond."
         if stack_trace := V.graph.current_node.meta.get("stack_trace", None):
@@ -7267,7 +7266,7 @@ def cond(pred, true_fn, false_fn, operands):
         V.graph.disable_cudagraphs_reason = msg
 
     result = ir.Conditional.create(pred, true_fn, false_fn, operands)
-    return list(map(TensorBox.create, result))
+    return list(map(TensorBox.create, result))  # pyrefly: ignore no-matching-overload
 
 
 @register_lowering(torch.ops.higher_order.while_loop, type_promotion_kind=None)
